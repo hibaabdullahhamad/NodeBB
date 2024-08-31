@@ -8,11 +8,9 @@ const user = require('../user');
 const meta = require('../meta');
 const messaging = require('../messaging');
 const notifications = require('../notifications');
-//const privileges = require('../privileges');
 const plugins = require('../plugins');
 const utils = require('../utils');
 
-//const websockets = require('../socket.io');
 const socketHelpers = require('../socket.io/helpers');
 
 const chatsAPI = module.exports;
