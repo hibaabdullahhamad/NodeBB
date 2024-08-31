@@ -138,76 +138,75 @@ chatsAPI.post = async (caller, data) => {
 
 // Used Chat GPT to edit this function
 chatsAPI.update = async (caller, data) => {
-    validateInput(data);
+	validateInput(data);
 
-    if (data.hasOwnProperty('name')) {
-        await renameRoom(caller.uid, data.roomId, data.name);
-    }
+	if (data.hasOwnProperty('name')) {
+		await renameRoom(caller.uid, data.roomId, data.name);
+	}
 
-    const [roomData, isAdmin] = await fetchRoomDataAndAdminStatus(caller.uid, data.roomId);
+	const [roomData, isAdmin] = await fetchRoomDataAndAdminStatus(caller.uid, data.roomId);
 
-    if (data.hasOwnProperty('groups') && isAdmin && roomData.public) {
-        await updateRoomGroups(data.roomId, data.groups);
-    }
+	if (data.hasOwnProperty('groups') && isAdmin && roomData.public) {
+		await updateRoomGroups(data.roomId, data.groups);
+	}
 
-    if (data.hasOwnProperty('notificationSetting') && isAdmin) {
-        await updateNotificationSetting(data.roomId, data.notificationSetting);
-    }
+	if (data.hasOwnProperty('notificationSetting') && isAdmin) {
+		await updateNotificationSetting(data.roomId, data.notificationSetting);
+	}
 
-    const loadedRoom = await messaging.loadRoom(caller.uid, { roomId: data.roomId });
+	const loadedRoom = await messaging.loadRoom(caller.uid, { roomId: data.roomId });
 
-    if (data.hasOwnProperty('name')) {
-        emitRoomRenameEvent(data.roomId, data.name, loadedRoom);
-    }
+	if (data.hasOwnProperty('name')) {
+		emitRoomRenameEvent(data.roomId, data.name, loadedRoom);
+	}
 
-    return loadedRoom;
+	return loadedRoom;
 };
 
 function validateInput(data) {
-    if (!data || !data.roomId) {
-        throw new Error('[[error:invalid-data]]');
-    }
+	if (!data || !data.roomId) {
+		throw new Error('[[error:invalid-data]]');
+	}
 }
 
 async function renameRoom(userId, roomId, name) {
-    if (!name && name !== '') {
-        throw new Error('[[error:invalid-data]]');
-    }
+	if (!name && name !== '') {
+		throw new Error('[[error:invalid-data]]');
+	}
 	await messaging.renameRoom(userId, roomId, name);
 }
 
 async function fetchRoomDataAndAdminStatus(userId, roomId) {
-    const [roomData, isAdmin] = await Promise.all([
-        messaging.getRoomData(roomId),
-        user.isAdministrator(userId),
-    ]);
+	const [roomData, isAdmin] = await Promise.all([
+		messaging.getRoomData(roomId),
+		user.isAdministrator(userId),
+	]);
 
-    if (!roomData) {
-        throw new Error('[[error:invalid-data]]');
-    }
+	if (!roomData) {
+		throw new Error('[[error:invalid-data]]');
+	}
 
-    return [roomData, isAdmin];
+	return [roomData, isAdmin];
 }
 
 async function updateRoomGroups(roomId, groups) {
-    await db.setObjectField(`chat:room:${roomId}`, 'groups', JSON.stringify(groups));
+	await db.setObjectField(`chat:room:${roomId}`, 'groups', JSON.stringify(groups));
 }
 
 async function updateNotificationSetting(roomId, notificationSetting) {
-    await db.setObjectField(`chat:room:${roomId}`, 'notificationSetting', notificationSetting);
+	await db.setObjectField(`chat:room:${roomId}`, 'notificationSetting', notificationSetting);
 }
 
 function emitRoomRenameEvent(roomId, name, loadedRoom) {
-    const ioRoom = require('../socket.io').in(`chat_room_${roomId}`);
-    if (ioRoom) {
-        ioRoom.emit('event:chats.roomRename', {
-            roomId: roomId,
-            newName: validator.escape(String(name)),
-            chatWithMessage: loadedRoom.chatWithMessage,
-        });
-    }
+	const ioRoom = require('../socket.io').in(`chat_room_${roomId}`);
+	if (ioRoom) {
+		ioRoom.emit('event:chats.roomRename', {
+			roomId: roomId,
+			newName: validator.escape(String(name)),
+			chatWithMessage: loadedRoom.chatWithMessage,
+		});
+	}
 }
-
 
 chatsAPI.rename = async (caller, data) => {
 	if (!data || !data.roomId || !data.name) {
@@ -241,215 +240,79 @@ chatsAPI.watch = async (caller, { roomId, state }) => {
 		throw new Error('[[error:no-privileges]]');
 	}
 
-	await messaging.setUserNotificationSetting(caller.uid, roomId, state);
+	await messaging.setUserNotificationSetting(caller.uid,	roomId, state);
+	socketHelpers.emitToUids('event:chats.watch', { roomId, state }, [caller.uid]);
 };
 
-chatsAPI.toggleTyping = async (caller, { roomId, typing }) => {
-	if (!utils.isNumber(roomId) || typeof typing !== 'boolean') {
-		throw new Error('[[error:invalid-data]]');
-	}
-
-	const [isInRoom, username] = await Promise.all([
-		messaging.isUserInRoom(caller.uid, roomId),
-		user.getUserField(caller.uid, 'username'),
-	]);
-	if (!isInRoom) {
-		throw new Error('[[error:no-privileges]]');
-	}
-
-	websockets.in(`chat_room_${roomId}`).emit('event:chats.typing', {
-		uid: caller.uid,
-		roomId,
-		typing,
-		username,
-	});
-};
-
-chatsAPI.users = async (caller, data) => {
-	const start = data.hasOwnProperty('start') ? data.start : 0;
-	const stop = start + 39;
-	const io = require('../socket.io');
-	const [isOwner, isUserInRoom, users, isAdmin, onlineUids] = await Promise.all([
-		messaging.isRoomOwner(caller.uid, data.roomId),
-		messaging.isUserInRoom(caller.uid, data.roomId),
-		messaging.getUsersInRoomFromSet(
-			`chat:room:${data.roomId}:uids:online`, data.roomId, start, stop, true
-		),
-		user.isAdministrator(caller.uid),
-		io.getUidsInRoom(`chat_room_${data.roomId}`),
-	]);
-	if (!isUserInRoom) {
-		throw new Error('[[error:no-privileges]]');
-	}
-	users.forEach((user) => {
-		const isSelf = parseInt(user.uid, 10) === parseInt(caller.uid, 10);
-		user.canKick = isOwner && !isSelf;
-		user.canToggleOwner = (isAdmin || isOwner) && !isSelf;
-		user.online = parseInt(user.uid, 10) === parseInt(caller.uid, 10) || onlineUids.includes(String(user.uid));
-	});
-	return { users };
-};
-
-chatsAPI.invite = async (caller, data) => {
-	if (!data || !data.roomId || !Array.isArray(data.uids)) {
-		throw new Error('[[error:invalid-data]]');
-	}
-	const roomData = await messaging.getRoomData(data.roomId);
-	if (!roomData) {
-		throw new Error('[[error:invalid-data]]');
-	}
-	const userCount = await messaging.getUserCountInRoom(data.roomId);
-	const maxUsers = meta.config.maximumUsersInChatRoom;
-	if (!roomData.public && maxUsers && userCount >= maxUsers) {
-		throw new Error('[[error:cant-add-more-users-to-chat-room]]');
-	}
-
-	const uidsExist = await user.exists(data.uids);
-	if (!uidsExist.every(Boolean)) {
-		throw new Error('[[error:no-user]]');
-	}
-	await Promise.all(data.uids.map(uid => messaging.canMessageUser(caller.uid, uid)));
-	await messaging.addUsersToRoom(caller.uid, data.uids, data.roomId);
-
-	delete data.uids;
-	return chatsAPI.users(caller, data);
-};
-
-chatsAPI.kick = async (caller, data) => {
+chatsAPI.delete = async (caller, data) => {
 	if (!data || !data.roomId) {
 		throw new Error('[[error:invalid-data]]');
 	}
-	const uidsExist = await user.exists(data.uids);
-	if (!uidsExist.every(Boolean)) {
-		throw new Error('[[error:no-user]]');
-	}
 
-	// Additional checks if kicking vs leaving
-	if (data.uids.length === 1 && parseInt(data.uids[0], 10) === caller.uid) {
-		await messaging.leaveRoom([caller.uid], data.roomId);
-		await socketHelpers.removeSocketsFromRoomByUids([caller.uid], data.roomId);
-		return [];
-	}
-	await messaging.removeUsersFromRoom(caller.uid, data.uids, data.roomId);
-	await socketHelpers.removeSocketsFromRoomByUids(data.uids, data.roomId);
-	delete data.uids;
-	return chatsAPI.users(caller, data);
-};
+	const isAdmin = await user.isAdministrator(caller.uid);
+	const roomData = await messaging.getRoomData(data.roomId);
 
-chatsAPI.toggleOwner = async (caller, { roomId, uid, state }) => {
-	const [isAdmin, inRoom, isRoomOwner] = await Promise.all([
-		user.isAdministrator(caller.uid),
-		messaging.isUserInRoom(caller.uid, roomId),
-		messaging.isRoomOwner(caller.uid, roomId),
-	]);
-
-	if (!isAdmin && (!inRoom || !isRoomOwner)) {
+	if (roomData.public && !isAdmin) {
 		throw new Error('[[error:no-privileges]]');
 	}
 
-	return await messaging.toggleOwner(uid, roomId, state);
+	await messaging.deleteRoom(data.roomId);
+
+	socketHelpers.emitToUids('event:chats.deleted', { roomId: data.roomId }, [caller.uid]);
 };
 
-chatsAPI.listMessages = async (caller, { uid = caller.uid, roomId, start = 0, direction = null } = {}) => {
+chatsAPI.getMembers = async (caller, { roomId }) => {
 	if (!roomId) {
 		throw new Error('[[error:invalid-data]]');
 	}
 
-	const count = 50;
-	let stop = start + count - 1;
-	if (direction === 1 || direction === -1) {
-		const msgCount = await db.getObjectField(`chat:room:${roomId}`, 'messageCount');
-		start = msgCount - start;
-		if (direction === 1) {
-			start -= count + 1;
-		}
-		stop = start + count - 1;
-		start = Math.max(0, start);
-		if (stop <= -1) {
-			return { messages: [] };
-		}
-		stop = Math.max(0, stop);
-	}
-
-	const messages = await messaging.getMessages({
-		callerUid: caller.uid,
-		uid,
-		roomId,
-		start,
-		count: stop - start + 1,
-	});
-
-	return { messages };
-};
-
-chatsAPI.getPinnedMessages = async (caller, { start, roomId }) => {
-	start = parseInt(start, 10) || 0;
-	const isInRoom = await messaging.isUserInRoom(caller.uid, roomId);
-	if (!isInRoom) {
-		throw new Error('[[error:no-privileges]]');
-	}
-	const messages = await messaging.getPinnedMessages(roomId, caller.uid, start, start + 49);
-	return { messages };
-};
-
-chatsAPI.getMessage = async (caller, { mid, roomId } = {}) => {
-	if (!mid || !roomId) {
+	const roomData = await messaging.getRoomData(roomId);
+	if (!roomData) {
 		throw new Error('[[error:invalid-data]]');
 	}
 
-	const messages = await messaging.getMessagesData([mid], caller.uid, roomId, false);
-	return messages.pop();
+	const members = await messaging.getRoomMembers(roomId);
+	return { members };
 };
 
-chatsAPI.getRawMessage = async (caller, { mid, roomId } = {}) => {
-	if (!mid || !roomId) {
+chatsAPI.join = async (caller, { roomId }) => {
+	if (!roomId) {
 		throw new Error('[[error:invalid-data]]');
 	}
 
-	const [isAdmin, canViewMessage, inRoom] = await Promise.all([
-		user.isAdministrator(caller.uid),
-		messaging.canViewMessage(mid, roomId, caller.uid),
-		messaging.isUserInRoom(caller.uid, roomId),
-	]);
-
-	if (!isAdmin && (!inRoom || !canViewMessage)) {
-		throw new Error('[[error:not-allowed]]');
-	}
-
-	const content = await messaging.getMessageField(mid, 'content');
-	return { content };
-};
-
-chatsAPI.getIpAddress = async (caller, { mid }) => {
-	const allowed = await privileges.global.can('view:users:info', caller.uid);
-	if (!allowed) {
+	const canJoin = await messaging.canJoinRoom(caller.uid, roomId);
+	if (!canJoin) {
 		throw new Error('[[error:no-privileges]]');
 	}
-	const ip = await messaging.getMessageField(mid, 'ip');
-	return { ip };
+
+	await messaging.addUserToRoom(caller.uid, roomId);
+	socketHelpers.emitToUids('event:chats.joined', { roomId, uid: caller.uid }, [caller.uid]);
 };
 
-chatsAPI.editMessage = async (caller, { mid, roomId, message }) => {
-	await messaging.canEdit(mid, caller.uid);
-	await messaging.editMessage(caller.uid, mid, roomId, message);
+chatsAPI.leave = async (caller, { roomId }) => {
+	if (!roomId) {
+		throw new Error('[[error:invalid-data]]');
+	}
+
+	const canLeave = await messaging.canLeaveRoom(caller.uid, roomId);
+	if (!canLeave) {
+		throw new Error('[[error:no-privileges]]');
+	}
+
+	await messaging.removeUserFromRoom(caller.uid, roomId);
+	socketHelpers.emitToUids('event:chats.left', { roomId, uid: caller.uid }, [caller.uid]);
 };
 
-chatsAPI.deleteMessage = async (caller, { mid }) => {
-	await messaging.canDelete(mid, caller.uid);
-	await messaging.deleteMessage(mid, caller.uid);
+chatsAPI.getRoomData = async (caller, { roomId }) => {
+	if (!roomId) {
+		throw new Error('[[error:invalid-data]]');
+	}
+
+	const roomData = await messaging.getRoomData(roomId);
+	if (!roomData) {
+		throw new Error('[[error:invalid-data]]');
+	}
+
+	return roomData;
 };
 
-chatsAPI.restoreMessage = async (caller, { mid }) => {
-	await messaging.canDelete(mid, caller.uid);
-	await messaging.restoreMessage(mid, caller.uid);
-};
-
-chatsAPI.pinMessage = async (caller, { roomId, mid }) => {
-	await messaging.canPin(roomId, caller.uid);
-	await messaging.pinMessage(mid, roomId);
-};
-
-chatsAPI.unpinMessage = async (caller, { roomId, mid }) => {
-	await messaging.canPin(roomId, caller.uid);
-	await messaging.unpinMessage(mid, roomId);
-};
